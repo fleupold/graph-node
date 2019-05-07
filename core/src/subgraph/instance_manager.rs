@@ -394,9 +394,14 @@ where
                     "id" => id_for_err.to_string()
                 );
 
-                // Set subgraph status to Failed
-                let status_ops =
+                // Set subgraph status to Failed and
+                let mut status_ops =
                     SubgraphDeploymentEntity::update_failed_operations(&id_for_err, true);
+                status_ops.append(&mut SubgraphDeploymentEntity::update_synced_operations(
+                    &id_for_err,
+                    false,
+                ));
+
                 if let Err(e) = store_for_err.apply_entity_operations(status_ops, EventSource::None)
                 {
                     error!(
