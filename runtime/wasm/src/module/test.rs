@@ -57,8 +57,8 @@ impl EthereumAdapter for MockEthereumAdapter {
 
     fn block_parent_hash(
         &self,
-        logger: &Logger,
-        block_hash: H256,
+        _: &Logger,
+        _: H256,
     ) -> Box<Future<Item = Option<H256>, Error = Error> + Send> {
         unimplemented!();
     }
@@ -81,9 +81,9 @@ impl EthereumAdapter for MockEthereumAdapter {
 
     fn calls_in_block(
         &self,
-        logger: &Logger,
-        block_number: u64,
-        block_hash: H256,
+        _: &Logger,
+        _: u64,
+        _: H256,
     ) -> Box<Future<Item = Vec<EthereumCall>, Error = Error> + Send> {
         unimplemented!();
     }
