@@ -386,6 +386,7 @@ where
     fn net_identifiers(
         &self,
         logger: &Logger,
+        network_name: String,
     ) -> Box<Future<Item = EthereumNetworkIdentifier, Error = Error> + Send> {
         let logger = logger.clone();
         let start_block = self.start_block;
@@ -430,6 +431,7 @@ where
                 .join(gen_block_hash_future)
                 .map(
                     |(net_version, genesis_block_hash)| EthereumNetworkIdentifier {
+                        name: network_name,
                         net_version,
                         genesis_block_hash,
                     },

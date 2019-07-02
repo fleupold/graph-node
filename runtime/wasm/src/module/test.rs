@@ -32,6 +32,7 @@ impl EthereumAdapter for MockEthereumAdapter {
     fn net_identifiers(
         &self,
         _: &Logger,
+        _: String,
     ) -> Box<Future<Item = EthereumNetworkIdentifier, Error = Error> + Send> {
         unimplemented!();
     }

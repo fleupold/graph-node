@@ -31,6 +31,7 @@ lazy_static! {
             let logger = &*LOGGER;
             let postgres_url = postgres_test_url();
             let net_identifiers = EthereumNetworkIdentifier {
+                name: "mainnet".to_string(),
                 net_version: "graph test suite".to_owned(),
                 genesis_block_hash: GENESIS_PTR.hash,
             };

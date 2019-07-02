@@ -232,6 +232,8 @@ pub enum SubgraphRegistrarError {
     NameExists(String),
     #[fail(display = "subgraph name not found: {}", _0)]
     NameNotFound(String),
+    #[fail(display = "subgraph cannot index data from multiple ethereum networks")]
+    MultipleNetworks,
     #[fail(display = "subgraph registrar internal query error: {}", _0)]
     QueryExecutionError(QueryExecutionError),
     #[fail(display = "subgraph registrar error with store: {}", _0)]
@@ -308,6 +310,10 @@ pub enum SubgraphAssignmentProviderEvent {
 pub enum SubgraphManifestValidationError {
     #[fail(display = "subgraph source address is required")]
     SourceAddressRequired,
+    #[fail(display = "subgraph cannot index data from multiple different ethereum networks")]
+    MultipleEthereumNetworks,
+    #[fail(display = "subgraph must have at least one Ethereum network data source")]
+    EthereumNetworkRequired,
     #[fail(display = "subgraph data source has too many similar block handlers")]
     DataSourceBlockHandlerLimitExceeded,
 }

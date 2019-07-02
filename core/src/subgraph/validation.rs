@@ -2,7 +2,7 @@ use graph::prelude::*;
 
 pub fn validate_manifest(
     manifest: SubgraphManifest,
-) -> Result<SubgraphManifest, SubgraphRegistrarError> {
+) -> Result<(String, SubgraphManifest), SubgraphRegistrarError> {
     let mut errors: Vec<SubgraphManifestValidationError> = Vec::new();
 
     // Validate that the manifest has a `source` address in each data source
@@ -57,9 +57,62 @@ pub fn validate_manifest(
         errors.push(SubgraphManifestValidationError::DataSourceBlockHandlerLimitExceeded)
     }
 
+    //    let mut network_name = "none".to_string();
+    //    let mut ethereum_networks: Vec<Option<String>> = manifest
+    //        .data_sources
+    //        .iter()
+    //        .cloned()
+    //        .filter(|d| d.kind == "ethereum/contract".to_string())
+    //        .map(|d| d.network)
+    //        .collect();
+    //    ethereum_networks.sort();
+    //    ethereum_networks.dedup();
+    //    match ethereum_networks.len() {
+    //        0 => errors.push(SubgraphManifestValidationError::EthereumNetworkRequired),
+    //        1 => {
+    //            match ethereum_networks.first().and_then(|n| n.clone()) {
+    //                Some(n) => network_name = n,
+    //                None => errors.push(SubgraphManifestValidationError::EthereumNetworkRequired),
+    //            };
+    //        }
+    //        _ => errors.push(SubgraphManifestValidationError::MultipleEthereumNetworks),
+    //    };
+
+    let mut network_name = String::from("none");
+    match resolve_network_name(manifest.clone()) {
+        Ok(n) => network_name = n,
+        Err(e) => errors.push(e),
+    };
+
+    //    if let Err(e) = network_name {
+    //        error.push(e)
+    //    }
+
     if errors.is_empty() {
-        return Ok(manifest);
+        return Ok((network_name, manifest));
     }
 
     return Err(SubgraphRegistrarError::ManifestValidationError(errors));
+}
+
+pub fn resolve_network_name(
+    manifest: SubgraphManifest,
+) -> Result<String, SubgraphManifestValidationError> {
+    let mut ethereum_networks: Vec<Option<String>> = manifest
+        .data_sources
+        .iter()
+        .cloned()
+        .filter(|d| d.kind == "ethereum/contract".to_string())
+        .map(|d| d.network)
+        .collect();
+    ethereum_networks.sort();
+    ethereum_networks.dedup();
+    match ethereum_networks.len() {
+        0 => Err(SubgraphManifestValidationError::EthereumNetworkRequired),
+        1 => match ethereum_networks.first().and_then(|n| n.clone()) {
+            Some(n) => Ok(n),
+            None => Err(SubgraphManifestValidationError::EthereumNetworkRequired),
+        },
+        _ => Err(SubgraphManifestValidationError::MultipleEthereumNetworks),
+    }
 }

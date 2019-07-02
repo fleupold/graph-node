@@ -15,6 +15,7 @@ use crate::util::extend::Extend;
 
 /// A collection of attributes that (kind of) uniquely identify an Ethereum blockchain.
 pub struct EthereumNetworkIdentifier {
+    pub name: String,
     pub net_version: String,
     pub genesis_block_hash: H256,
 }
@@ -346,6 +347,7 @@ pub trait EthereumAdapter: Send + Sync + 'static {
     fn net_identifiers(
         &self,
         logger: &Logger,
+        network_name: String,
     ) -> Box<Future<Item = EthereumNetworkIdentifier, Error = Error> + Send>;
 
     /// Find the most recent block.

@@ -12,11 +12,13 @@ use graph::data::subgraph::schema::{
 use graph::prelude::{SubgraphInstance as SubgraphInstanceTrait, *};
 use graph::util::extend::Extend;
 
+use super::validation;
 use super::SubgraphInstance;
 
 type SharedInstanceKeepAliveMap = Arc<RwLock<HashMap<SubgraphDeploymentId, CancelGuard>>>;
 
 struct IndexingInputs<B, S, T> {
+    pub network_name: String,
     pub deployment_id: SubgraphDeploymentId,
     pub store: Arc<S>,
     pub stream_builder: B,
@@ -60,9 +62,9 @@ impl SubgraphInstanceManager {
     /// Creates a new runtime manager.
     pub fn new<B, S, T>(
         logger_factory: &LoggerFactory,
-        store: Arc<S>,
-        host_builder: T,
-        block_stream_builder: B,
+        stores: HashMap<String, Arc<S>>,
+        host_builders: HashMap<String, T>,
+        block_stream_builders: HashMap<String, B>,
     ) -> Self
     where
         S: Store + ChainStore,
@@ -79,9 +81,9 @@ impl SubgraphInstanceManager {
         Self::handle_subgraph_events(
             logger_factory,
             subgraph_receiver,
-            store,
-            host_builder,
-            block_stream_builder,
+            stores,
+            host_builders,
+            block_stream_builders,
         );
 
         SubgraphInstanceManager {
@@ -94,9 +96,9 @@ impl SubgraphInstanceManager {
     fn handle_subgraph_events<B, S, T>(
         logger_factory: LoggerFactory,
         receiver: Receiver<SubgraphAssignmentProviderEvent>,
-        store: Arc<S>,
-        host_builder: T,
-        block_stream_builder: B,
+        stores: HashMap<String, Arc<S>>,
+        host_builders: HashMap<String, T>,
+        block_stream_builders: HashMap<String, B>,
     ) where
         S: Store + ChainStore,
         T: RuntimeHostBuilder,
@@ -112,29 +114,52 @@ impl SubgraphInstanceManager {
                 SubgraphStart(manifest) => {
                     let logger = logger_factory.subgraph_logger(&manifest.id);
 
+                    //                    let mut host_builder: Option<RuntimeHostBuilder<Host=RuntimeHost>>;
+                    //                    let mut block_stream_builder: Option<BlockStreamBuilder<Stream=BlockStream + Send + 'static>>;
+
                     info!(
                         logger,
                         "Start subgraph";
                         "data_sources" => manifest.data_sources.len()
                     );
 
-                    Self::start_subgraph(
-                        logger.clone(),
-                        instances.clone(),
-                        host_builder.clone(),
-                        block_stream_builder.clone(),
-                        store.clone(),
-                        manifest,
-                    )
-                    .map_err(|err| {
-                        error!(
+                    match validation::resolve_network_name(manifest.clone()) {
+                        Ok(n) => {
+                            Self::start_subgraph(
+                                logger.clone(),
+                                n.clone(),
+                                instances.clone(),
+                                host_builders
+                                    .get(&n)
+                                    .expect(&format!("expected host builder that matches subgraph network: {}", &n))
+                                    .clone(),
+                                block_stream_builders
+                                    .get(&n)
+                                    .expect(&format!("expected block stream that matches subgraph network: {}", &n))
+                                    .clone(),
+                                stores
+                                    .get(&n)
+                                    .expect(&format!("expected store that matches subgraph network: {}", &n))
+                                    .clone(),
+                                manifest,
+                            )
+                            .map_err(|err| {
+                                error!(
+                                    logger,
+                                    "Failed to start subgraph: {}",
+                                    err;
+                                    "code" => LogCode::SubgraphStartFailure
+                                )
+                            })
+                            .ok();
+                        }
+                        Err(e) => error!(
                             logger,
                             "Failed to start subgraph: {}",
-                            err;
+                             e;
                             "code" => LogCode::SubgraphStartFailure
-                        )
-                    })
-                    .ok();
+                        ),
+                    };
                 }
                 SubgraphStop(id) => {
                     let logger = logger_factory.subgraph_logger(&id);
@@ -150,6 +175,7 @@ impl SubgraphInstanceManager {
 
     fn start_subgraph<B, T, S>(
         logger: Logger,
+        network_name: String,
         instances: SharedInstanceKeepAliveMap,
         host_builder: T,
         stream_builder: B,
@@ -211,6 +237,7 @@ impl SubgraphInstanceManager {
         // The subgraph state tracks the state of the subgraph instance over time
         let ctx = IndexingContext {
             inputs: IndexingInputs {
+                network_name: network_name.clone(),
                 deployment_id,
                 templates,
                 store,
@@ -280,6 +307,7 @@ where
     let logger_for_err = logger.clone();
     let logger_for_restart_check = logger.clone();
     let logger_for_block_stream_errors = logger.clone();
+    let network_name = ctx.inputs.network_name.clone();
 
     let block_stream_canceler = CancelGuard::new();
     let block_stream_cancel_handle = block_stream_canceler.handle();
