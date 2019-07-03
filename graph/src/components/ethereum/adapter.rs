@@ -114,6 +114,7 @@ impl EthereumLogFilter {
     /// Check if this filter matches the specified `Log`.
     pub fn matches(&self, log: &Log) -> bool {
         // First topic should be event sig
+        println!("log matching");
         match log.topics.first() {
             None => false,
             Some(sig) => self
@@ -188,6 +189,7 @@ impl EthereumCallFilter {
             .contract_addresses_function_signatures
             .contains_key(&call.to)
         {
+            println!("MatchingCall false");
             return false;
         }
         // If the call is to a contract with no specified functions, keep the call
@@ -200,13 +202,16 @@ impl EthereumCallFilter {
             // Allow the ability to match on calls to a contract generally
             // If you want to match on a generic call to contract this limits you
             // from matching with a specific call to a contract
+            println!("MatchingCall false");
             return true;
         }
         // Ensure the call is to run a function the filter expressed an interest in
-        self.contract_addresses_function_signatures
+        let result = self.contract_addresses_function_signatures
             .get(&call.to)
             .unwrap()
-            .contains(&call.input.0[..4])
+            .contains(&call.input.0[..4]);
+        println!("MatchingCall {}", result);
+        return result;
     }
 
     pub fn from_data_sources_opt<'a, I>(iter: I) -> Option<Self>

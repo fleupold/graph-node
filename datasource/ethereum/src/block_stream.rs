@@ -174,6 +174,7 @@ where
         reorg_threshold: u64,
         logger: Logger,
     ) -> Self {
+        log_filter.clone().unwrap();
         BlockStream {
             state: Mutex::new(BlockStreamState::New),
             consecutive_err_count: 0,
@@ -268,11 +269,16 @@ where
                 // Exit loop if done or there are blocks to process.
                 .and_then(move |outcome| match outcome {
                     ReconciliationStepOutcome::YieldBlocks(next_blocks) => {
+                        println!("ReconciliationStepOutcome::YieldBlocks");
                         Ok(future::Loop::Break(Some(next_blocks)))
                     }
-                    ReconciliationStepOutcome::MoreSteps => Ok(future::Loop::Continue(())),
+                    ReconciliationStepOutcome::MoreSteps => {
+                        println!("ReconciliationStepOutcome::MoreSteps");
+                        Ok(future::Loop::Continue(()))
+                    },
                     ReconciliationStepOutcome::Done => {
                         // Reconciliation is complete, so try to mark subgraph as Synced
+                        println!("ReconciliationStepOutcome::Done");
                         ctx3.update_subgraph_synced_status()?;
 
                         Ok(future::Loop::Break(None))
@@ -403,7 +409,7 @@ where
                             cmp::min(from + speedup * *ETHEREUM_BLOCK_RANGE_SIZE - 1, to_limit)
                         };
 
-                        debug!(ctx.logger, "Scanning blocks [{}, {}]", from, to);
+                        info!(ctx.logger, "Scanning blocks [{}, {}]", from, to);
                         Box::new(
                             ctx.eth_adapter
                                 .blocks_with_triggers(
@@ -532,12 +538,15 @@ where
                         // Note that head_ancestor is a child of subgraph_ptr.
                         let block_future = future::ok(head_ancestor).and_then(
                             move |block| -> Box<Future<Item = _, Error = _> + Send> {
+                                println!("Block Future");
                                 if !include_calls_in_blocks {
+                                    println!("don't include calls");
                                     return Box::new(future::ok(EthereumBlockWithCalls {
                                         ethereum_block: block,
                                         calls: None,
                                     }));
                                 }
+                                println!("include calls");
                                 let block_with_calls = ctx
                                     .eth_adapter
                                     .calls_in_block(
@@ -581,6 +590,7 @@ where
         let include_calls_in_blocks = self.include_calls_in_blocks;
 
         // We now know where to take the subgraph ptr.
+        println!("Do Step");
         match step {
             ReconciliationStep::Retry => Box::new(future::ok(ReconciliationStepOutcome::MoreSteps)),
             ReconciliationStep::Done => Box::new(future::ok(ReconciliationStepOutcome::Done)),
@@ -617,10 +627,13 @@ where
                     )
                 }))
             }
-            ReconciliationStep::AdvanceToDescendantBlock { from, to } => Box::new(future::result(
-                self.set_block_ptr_with_no_changes(from, to)
-                    .map(|()| ReconciliationStepOutcome::MoreSteps),
-            )),
+            ReconciliationStep::AdvanceToDescendantBlock { from, to } => {
+                println!("ReconciliationStep::AdvanceToDescendantBlock");
+                Box::new(future::result(
+                    self.set_block_ptr_with_no_changes(from, to)
+                        .map(|()| ReconciliationStepOutcome::MoreSteps),
+                ))
+            }
             ReconciliationStep::ProcessDescendantBlocks {
                 from,
                 log_filter,
@@ -628,6 +641,7 @@ where
                 block_filter,
                 descendant_blocks,
             } => {
+                println!("ReconciliationStep::ProcessDescendantBlocks");
                 let mut subgraph_ptr = from;
                 let log_filter = log_filter.clone();
                 let call_filter = call_filter.clone();
@@ -639,6 +653,7 @@ where
                     Box::new(
                         descendant_blocks
                             .and_then(move |descendant_block| {
+                                println!("descendant_block");
                                 // First, check if there are blocks between subgraph_ptr and
                                 // descendant_block.
                                 let descendant_parent_ptr = EthereumBlockPointer::to_parent(
@@ -665,12 +680,12 @@ where
                                 // value it will have after descendant_block is
                                 // processed.
                                 subgraph_ptr = (&descendant_block.ethereum_block).into();
-
+                                println!("Ok(descendant_block)");
                                 Ok(descendant_block)
                             })
                             .and_then(move |descendant_block| {
                                 future::result(Self::parse_triggers(
-                                    log_filter.clone(),
+                                    Some(log_filter.clone().unwrap()),
                                     call_filter.clone(),
                                     block_filter.clone(),
                                     include_calls_in_blocks,
@@ -852,6 +867,7 @@ where
     ) -> impl Stream<Item = EthereumBlockWithCalls, Error = Error> + Send {
         let ctx = self.clone();
 
+        println!("load_blocks");
         let block_batch_size: usize = env::var_os("ETHEREUM_BLOCK_BATCH_SIZE")
             .map(|s| s.to_str().unwrap().parse().unwrap())
             .unwrap_or(50);
@@ -963,6 +979,7 @@ where
             log_filter_opt,
             &descendant_block.ethereum_block,
         ));
+        println!("parse_call_triggers");
         triggers.append(&mut parse_call_triggers(call_filter_opt, &descendant_block));
         triggers.append(&mut parse_block_triggers(
             block_filter_opt,
@@ -1109,6 +1126,7 @@ where
                         Ok(Async::NotReady) => {
                             // Nothing to change or yield yet.
                             state = BlockStreamState::Reconciliation(next_blocks_future);
+                            println!("next_blocks_future.poll() not ready");
                             break Ok(Async::NotReady);
                         }
 
@@ -1130,16 +1148,19 @@ where
 
                 // Yielding blocks from reconciliation process
                 BlockStreamState::YieldingBlocks(mut next_blocks) => {
+                    println!("next_blocks.poll()...");
                     match next_blocks.poll() {
                         // Yield one block
                         Ok(Async::Ready(Some(next_block))) => {
                             state = BlockStreamState::YieldingBlocks(next_blocks);
+                            println!("next_blocks.poll() YieldingBlocks");
                             break Ok(Async::Ready(Some(next_block)));
                         }
 
                         // Done yielding blocks
                         Ok(Async::Ready(None)) => {
                             // Reset error count
+                            println!("next_blocks.poll() ready");
                             self.consecutive_err_count = 0;
 
                             // Restart reconciliation until more blocks or done
@@ -1153,6 +1174,7 @@ where
                         Ok(Async::NotReady) => {
                             // Nothing to change or yield yet
                             state = BlockStreamState::YieldingBlocks(next_blocks);
+                            println!("next_blocks.poll() not ready");
                             break Ok(Async::NotReady);
                         }
 
@@ -1183,6 +1205,7 @@ where
 
                     Ok(Async::NotReady) => {
                         state = BlockStreamState::RetryAfterDelay(delay);
+                        println!("retry after delay not ready");
                         break Ok(Async::NotReady);
                     }
                 },
@@ -1209,6 +1232,7 @@ where
                         Ok(Async::NotReady) => {
                             // Stay idle
                             state = BlockStreamState::Idle;
+                            println!("chain_head_update_stream.poll() not ready");
                             break Ok(Async::NotReady);
                         }
 
@@ -1228,6 +1252,7 @@ where
 
         mem::replace(&mut *state_lock, state);
 
+        println!("Result: {:?}", result);
         result
     }
 }
@@ -1317,11 +1342,14 @@ fn parse_log_triggers(
     log_filter: Option<EthereumLogFilter>,
     block: &EthereumBlock,
 ) -> Vec<EthereumTrigger> {
+    println!("log filter?");
     log_filter.map_or(vec![], |log_filter| {
+        println!("found log filter");
         block
             .transaction_receipts
             .iter()
             .flat_map(move |receipt| {
+                println!("found receipt?");
                 let log_filter = log_filter.clone();
                 receipt
                     .logs

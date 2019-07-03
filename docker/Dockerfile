@@ -12,9 +12,8 @@ RUN apt-get update \
 RUN git clone https://github.com/graphprotocol/graph-node \
     && cd graph-node \
     && git checkout "$SOURCE_BRANCH" \
-    && cargo install --path node \
-    && cd .. \
-    && rm -rf graph-node
+    && cargo build \
+    && cd ..
 
 # Clone and install wait-for-it
 RUN git clone https://github.com/vishnubob/wait-for-it \
@@ -49,4 +48,7 @@ ADD start-node /usr/local/bin
 CMD wait-for-it.sh $ipfs -t 30 \
     && wait-for-it.sh $postgres_host -t 30 \
     && sleep 5 \
-    && start-node
+    && cd graph-node \ 
+    && cargo run -p graph-node -- \
+        --postgres-url "postgresql://$postgres_user:$postgres_pass@$postgres_host/$postgres_db" \
+        --ethereum-rpc "$ethereum"

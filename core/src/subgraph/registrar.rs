@@ -371,7 +371,7 @@ fn start_subgraph<P: SubgraphAssignmentProviderTrait>(
         })
 }
 
-fn create_subgraph(
+pub fn create_subgraph(
     logger: &Logger,
     store: Arc<impl Store>,
     name: SubgraphName,
@@ -412,7 +412,7 @@ fn create_subgraph(
     Ok(CreateSubgraphResult { id: entity_id })
 }
 
-fn create_subgraph_version(
+pub fn create_subgraph_version(
     logger: &Logger,
     store: Arc<impl Store>,
     chain_store: Arc<impl ChainStore>,

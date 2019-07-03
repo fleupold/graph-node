@@ -13,7 +13,7 @@ extern crate uuid;
 
 mod graphql;
 mod link_resolver;
-mod subgraph;
+pub mod subgraph;
 
 pub use crate::graphql::GraphQlRunner;
 pub use crate::link_resolver::LinkResolver;

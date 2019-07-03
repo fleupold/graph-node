@@ -197,18 +197,20 @@ impl SubgraphInstanceManager {
         // block handlers with call filters; in this case, we need to
         // include calls in all blocks so we cen reprocess the block
         // when new dynamic data sources are being created
-        let include_calls_in_blocks = templates
+        let mut include_calls_in_blocks = templates
             .iter()
             .find(|(_, template)| {
                 template.has_call_handler() || template.has_block_handler_with_call_filter()
             })
             .is_some();
+        include_calls_in_blocks = true;
 
         // Create a subgraph instance from the manifest; this moves
         // ownership of the manifest and host builder into the new instance
         let instance = SubgraphInstance::from_manifest(&logger, manifest, &host_builder)?;
 
         // The subgraph state tracks the state of the subgraph instance over time
+        println!("Indexing Context, include calls: {}", include_calls_in_blocks);
         let ctx = IndexingContext {
             inputs: IndexingInputs {
                 deployment_id,
@@ -237,6 +239,7 @@ impl SubgraphInstanceManager {
         //
         // This task has many calls to the store, so mark it as `blocking`.
         tokio::spawn(graph::util::futures::blocking(loop_fn(ctx, |ctx| {
+            println!("Run Subgraph");
             run_subgraph(ctx)
         })));
 
@@ -305,7 +308,7 @@ where
         .unwrap()
         .insert(ctx.inputs.deployment_id.clone(), block_stream_canceler);
 
-    debug!(logger, "Starting block stream");
+    info!(logger, "Starting block stream");
 
     // Flag that indicates when the subgraph needs to be
     // restarted due to new dynamic data sources being added
@@ -319,6 +322,7 @@ where
         // have been created. Once that has happened, we need to restart
         // the stream to include blocks for these data sources as well.
         .take_while(move |_| {
+            println!("Took Block");
             if needs_restart_check.load(Ordering::SeqCst) {
                 debug!(
                     logger_for_restart_check,
@@ -346,7 +350,7 @@ where
         // Process blocks from the stream as long as no restart is needed
         .fold(ctx, move |ctx, block| {
             let needs_restart_set = needs_restart_set.clone();
-
+            println!("Process Block");
             process_block(
                 logger.clone(),
                 ctx,
@@ -432,9 +436,10 @@ where
         "block_hash" => format!("{:?}", block.block.hash.unwrap())
     ));
 
+    println!("Trigger Found");
     if triggers.len() == 1 {
         info!(logger, "1 trigger found in this block for this subgraph");
-    } else if triggers.len() > 1 {
+    } else {
         info!(
             logger,
             "{} triggers found in this block for this subgraph",
@@ -475,6 +480,7 @@ where
             calls,
         };
 
+        println!("Parse Triggers");
         future::result(<B>::Stream::parse_triggers(
             EthereumLogFilter::from_data_sources_opt(&data_sources),
             EthereumCallFilter::from_data_sources_opt(&data_sources),

@@ -1083,7 +1083,6 @@ impl Table {
                         public::entities::data.eq(public::entities::data.merge(data)),
                         public::entities::event_source.eq(&event_source),
                     ));
-
                     match guard {
                         Some(filter) => {
                             let filter = build_filter(filter).map_err(|e| {

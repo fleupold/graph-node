@@ -2,7 +2,7 @@ mod instance;
 mod instance_manager;
 mod loader;
 mod provider;
-mod registrar;
+pub mod registrar;
 mod validation;
 
 pub use self::instance::SubgraphInstance;

@@ -138,6 +138,7 @@ where
                             subgraph.id.clone(),
                             subgraph.schema.document.clone(),
                         );
+                        println!("{:?}", index_definitions);
                         self_clone
                             .store
                             .clone()

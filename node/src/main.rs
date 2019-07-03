@@ -20,27 +20,22 @@ extern crate url;
 use clap::{App, Arg};
 use futures::sync::mpsc;
 use git_testament::{git_testament, render_testament};
-use ipfs_api::IpfsClient;
 use lazy_static::lazy_static;
 use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 
 use graph::components::forward;
+use graph::components::subgraph::{DummyRuntimeHost, DummySubgraphProvider};
 use graph::log::logger;
-use graph::prelude::{JsonRpcServer as _, *};
+use graph::prelude::{*};
 use graph::tokio_executor;
 use graph::tokio_timer;
 use graph::tokio_timer::timer::Timer;
 use graph::util::security::SafeDisplay;
-use graph_core::{
-    LinkResolver, SubgraphAssignmentProvider as IpfsSubgraphAssignmentProvider,
-    SubgraphInstanceManager, SubgraphRegistrar as IpfsSubgraphRegistrar,
-};
+use graph_core::{SubgraphInstanceManager};
 use graph_datasource_ethereum::{BlockStreamBuilder, Transport};
-use graph_runtime_wasm::RuntimeHostBuilder as WASMRuntimeHostBuilder;
 use graph_server_http::GraphQLServer as GraphQLQueryServer;
-use graph_server_json_rpc::JsonRpcServer;
 use graph_server_websocket::SubscriptionServer as GraphQLSubscriptionServer;
 use graph_store_postgres::{Store as DieselStore, StoreConfig};
 
@@ -267,9 +262,6 @@ fn async_main() -> impl Future<Item = (), Error = ()> + Send + 'static {
     let node_id = NodeId::new(matches.value_of("node-id").unwrap())
         .expect("Node ID must contain only a-z, A-Z, 0-9, and '_'");
 
-    // Obtain subgraph related command-line arguments
-    let subgraph = matches.value_of("subgraph").map(|s| s.to_owned());
-
     // Obtain the Ethereum parameters
     let ethereum_rpc = matches.value_of("ethereum-rpc");
     let ethereum_ipc = matches.value_of("ethereum-ipc");
@@ -282,25 +274,6 @@ fn async_main() -> impl Future<Item = (), Error = ()> + Send + 'static {
             .parse()
             .expect("Ethereum polling interval must be a nonnegative integer"),
     );
-
-    // Obtain ports to use for the GraphQL server(s)
-    let http_port = matches
-        .value_of("http-port")
-        .unwrap()
-        .parse()
-        .expect("invalid GraphQL HTTP server port");
-    let ws_port = matches
-        .value_of("ws-port")
-        .unwrap()
-        .parse()
-        .expect("invalid GraphQL WebSocket server port");
-
-    // Obtain JSON-RPC server port
-    let json_rpc_port = matches
-        .value_of("admin-port")
-        .unwrap()
-        .parse()
-        .expect("invalid admin port");
 
     debug!(logger, "Setting up Sentry");
 
@@ -317,79 +290,9 @@ fn async_main() -> impl Future<Item = (), Error = ()> + Send + 'static {
     sentry::integrations::panic::register_panic_handler();
     info!(logger, "Starting up");
 
-    // Parse the IPFS URL from the `--ipfs` command line argument
-    let ipfs_address = matches
-        .value_of("ipfs")
-        .map(|uri| {
-            if uri.starts_with("http://") || uri.starts_with("https://") {
-                String::from(uri)
-            } else {
-                format!("http://{}", uri)
-            }
-        })
-        .unwrap()
-        .to_owned();
-
-    // Optionally, identify the Elasticsearch logging configuration
-    let elastic_config =
-        matches
-            .value_of("elasticsearch-url")
-            .map(|endpoint| ElasticLoggingConfig {
-                endpoint: endpoint.into(),
-                username: matches.value_of("elasticsearch-user").map(|s| s.into()),
-                password: matches.value_of("elasticsearch-password").map(|s| s.into()),
-            });
 
     // Create a component and subgraph logger factory
-    let logger_factory = LoggerFactory::new(logger.clone(), elastic_config);
-
-    info!(
-        logger,
-        "Trying IPFS node at: {}",
-        SafeDisplay(&ipfs_address)
-    );
-
-    // Try to create an IPFS client for this URL
-    let ipfs_client = match IpfsClient::new_from_uri(ipfs_address.as_ref()) {
-        Ok(ipfs_client) => ipfs_client,
-        Err(e) => {
-            error!(
-                logger,
-                "Failed to create IPFS client for `{}`: {}",
-                SafeDisplay(&ipfs_address),
-                e
-            );
-            panic!("Could not connect to IPFS");
-        }
-    };
-
-    // Test the IPFS client by getting the version from the IPFS daemon
-    let ipfs_test = ipfs_client.version();
-    let ipfs_ok_logger = logger.clone();
-    let ipfs_err_logger = logger.clone();
-    let ipfs_address_for_ok = ipfs_address.clone();
-    let ipfs_address_for_err = ipfs_address.clone();
-    tokio::spawn(
-        ipfs_test
-            .map_err(move |e| {
-                error!(
-                    ipfs_err_logger,
-                    "Is there an IPFS node running at \"{}\"?",
-                    SafeDisplay(ipfs_address_for_err),
-                );
-                panic!("Failed to connect to IPFS: {}", e);
-            })
-            .map(move |_| {
-                info!(
-                    ipfs_ok_logger,
-                    "Successfully connected to IPFS node at: {}",
-                    SafeDisplay(ipfs_address_for_ok)
-                );
-            }),
-    );
-
-    // Convert the client into a link resolver
-    let link_resolver = Arc::new(LinkResolver::from(ipfs_client));
+    let logger_factory = LoggerFactory::new(logger.clone(), None);
 
     // Parse the Ethereum URL
     let (ethereum_network_name, ethereum_node_url) = parse_ethereum_network_and_node(
@@ -505,23 +408,46 @@ fn async_main() -> impl Future<Item = (), Error = ()> + Send + 'static {
         *REORG_THRESHOLD,
     );
 
-    // Prepare for hosting WASM runtimes and managing subgraph instances
-    let runtime_host_builder =
-        WASMRuntimeHostBuilder::new(eth_adapter.clone(), link_resolver.clone(), store.clone());
     let subgraph_instance_manager = SubgraphInstanceManager::new(
         &logger_factory,
         store.clone(),
-        runtime_host_builder,
+        DummyRuntimeHost {},
         block_stream_builder,
     );
 
-    // Create IPFS-based subgraph provider
-    let mut subgraph_provider = IpfsSubgraphAssignmentProvider::new(
-        &logger_factory,
-        link_resolver.clone(),
-        store.clone(),
-        graphql_runner.clone(),
+    use graphql_parser::schema::Document;
+    use graph::data::subgraph::{BaseSubgraphManifest};
+    let schema = Schema::new(
+        SubgraphDeploymentId::new("testschema").unwrap(),
+        Document {definitions: vec![]},
     );
+    let manifest = BaseSubgraphManifest::<Schema, DataSource> {
+        id: SubgraphDeploymentId::new("testmanifest").unwrap(),
+        location: "test_location".to_owned(),
+        spec_version: "test_spec_version".to_owned(),
+        description: None,
+        repository: None,
+        schema,
+        data_sources: vec![],
+    };
+    /*
+    graph_core::subgraph::registrar::create_subgraph(
+        &logger, 
+        store.clone(),
+        SubgraphName::new("subgraph").unwrap()
+    ).unwrap();
+    */
+    graph_core::subgraph::registrar::create_subgraph_version(
+        &logger,
+        store.clone(),
+        store.clone(), 
+        SubgraphName::new("subgraph").unwrap(),
+        manifest,
+        NodeId::new("nodeId").unwrap(),
+        SubgraphVersionSwitchingMode::Instant
+    ).unwrap();
+
+    let mut subgraph_provider = DummySubgraphProvider::new();
 
     // Forward subgraph events from the subgraph provider to the subgraph instance manager
     tokio::spawn(forward(&mut subgraph_provider, &subgraph_instance_manager).unwrap());
@@ -532,79 +458,6 @@ fn async_main() -> impl Future<Item = (), Error = ()> + Send + 'static {
             .unwrap_or_else(|| "instant".into())
             .to_str()
             .expect("invalid version switching mode"),
-    );
-
-    // Create named subgraph provider for resolving subgraph name->ID mappings
-    let subgraph_registrar = Arc::new(IpfsSubgraphRegistrar::new(
-        &logger_factory,
-        link_resolver,
-        Arc::new(subgraph_provider),
-        store.clone(),
-        store.clone(),
-        node_id.clone(),
-        version_switching_mode,
-    ));
-    tokio::spawn(
-        subgraph_registrar
-            .start()
-            .then(|start_result| Ok(start_result.expect("failed to initialize subgraph provider"))),
-    );
-
-    // Start admin JSON-RPC server.
-    let json_rpc_server = JsonRpcServer::serve(
-        json_rpc_port,
-        http_port,
-        ws_port,
-        subgraph_registrar.clone(),
-        node_id.clone(),
-        logger.clone(),
-    )
-    .expect("failed to start JSON-RPC admin server");
-
-    // Let the server run forever.
-    std::mem::forget(json_rpc_server);
-
-    // Add the CLI subgraph with a REST request to the admin server.
-    if let Some(subgraph) = subgraph {
-        let (name, hash) = if subgraph.contains(':') {
-            let mut split = subgraph.split(':');
-            (split.next().unwrap(), split.next().unwrap().to_owned())
-        } else {
-            ("cli", subgraph)
-        };
-
-        let name = SubgraphName::new(name)
-            .expect("Subgraph name must contain only a-z, A-Z, 0-9, '-' and '_'");
-        let subgraph_id =
-            SubgraphDeploymentId::new(hash).expect("Subgraph hash must be a valid IPFS hash");
-
-        tokio::spawn(
-            subgraph_registrar
-                .create_subgraph(name.clone())
-                .then(
-                    |result| Ok(result.expect("Failed to create subgraph from `--subgraph` flag")),
-                )
-                .and_then(move |_| {
-                    subgraph_registrar.create_subgraph_version(name, subgraph_id, node_id)
-                })
-                .then(|result| {
-                    Ok(result.expect("Failed to deploy subgraph from `--subgraph` flag"))
-                }),
-        );
-    }
-
-    // Serve GraphQL queries over HTTP
-    tokio::spawn(
-        graphql_server
-            .serve(http_port, ws_port)
-            .expect("Failed to start GraphQL query server"),
-    );
-
-    // Serve GraphQL subscriptions over WebSockets
-    tokio::spawn(
-        subscription_server
-            .serve(ws_port)
-            .expect("Failed to start GraphQL subscription server"),
     );
 
     // Periodically check for contention in the tokio threadpool. First spawn a

@@ -1,7 +1,12 @@
 version: '3'
 services:
   graph-node:
-    image: graphprotocol/graph-node
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    volumes:
+      - ../graph:/graph-node/graph
+      - ../node:/graph-node/node
     ports:
       - '8000:8000'
       - '8001:8001'
@@ -16,7 +21,7 @@ services:
       postgres_db: graph-node
       ipfs: 'ipfs:5001'
       ethereum: 'dev:http://host.docker.internal:8545'
-      RUST_LOG: info
+      RUST_LOG: debug
   ipfs:
     image: ipfs/go-ipfs
     ports:
